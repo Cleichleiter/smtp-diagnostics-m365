@@ -1,159 +1,167 @@
-# Real-World SMTP Failure Example – Spamhaus Block (Microsoft 365)
+Real-World Failure Case: Microsoft 365 MX Relay Blocked by IP Reputation
+Summary
 
-## Scenario Overview
+A Sharp MX-series copier was unable to send scan-to-email messages using Microsoft 365 Direct Send (MX endpoint on port 25). Despite successful network connectivity, STARTTLS negotiation, and connector validation, email delivery consistently failed.
 
-A Sharp MX-4070N multifunction copier was unable to deliver scan-to-email messages through Microsoft 365. Basic SMTP connectivity tests intermittently succeeded, but scanned documents were never delivered.
+The root cause was an IP reputation block enforced by Microsoft 365 at the RCPT TO stage, based on third-party blocklists (e.g., Spamhaus).
 
-This example documents the exact failure mode, the diagnostic evidence, and the validated resolution.
+Environment
 
----
+Device: Sharp MX-4070N (MX-series MFP)
 
-## Environment Summary
+Function: Scan to Email
 
-* Device: Sharp MX-4070N
-* Function: Scan to Email
-* Email Platform: Microsoft 365 / Exchange Online
-* Firewall: UniFi UDM Pro
-* ISP: Verizon 5G Home
-* Sender Address: `office@domain.com`
-* Initial SMTP Endpoint: Microsoft 365 MX (Port 25)
+SMTP Method Attempted: Direct Send (MX endpoint)
 
----
+Microsoft 365 Tenant: <tenant-domain>
 
-## Initial Configuration (Failing)
+Firewall: UniFi UDM Pro
 
-| Setting             | Value                                      |
-| ------------------- | ------------------------------------------ |
-| SMTP Server         | `<tenant>-com.mail.protection.outlook.com` |
-| Port                | 25                                         |
-| STARTTLS            | Enabled                                    |
-| SMTP Authentication | Disabled                                   |
-| Sender Address      | `office@domain.com`                        |
+Public IP Type: ISP-assigned / non-dedicated
 
----
+SMTP Endpoint: <tenant-domain>.mail.protection.outlook.com
 
-## Observed Symptoms
+Port: 25
 
-* Copier SMTP connection test reported success
-* STARTTLS was advertised by the server
-* No emails were delivered
-* No messages appeared in Exchange message trace
-* Enabling SMTP authentication caused authentication failures
+Encryption: STARTTLS
 
----
+Initial Symptoms
 
-## Diagnostic Testing Performed
+Copier reports generic “communication error” or “connection failed”
 
-### Network Connectivity
+Microsoft 365 connector validation test succeeds
 
-* TCP connectivity to port 25 confirmed
-* No firewall blocks detected
-* UniFi threat management not interfering with SMTP traffic
+SMTP banner and EHLO succeed
 
----
+STARTTLS negotiation succeeds
 
-### SMTP Capability Testing
+No message appears in Exchange message trace
 
-PowerShell scripts were used to perform a full SMTP conversation against the Microsoft 365 MX endpoint.
+No visible errors in Exchange Admin Center
 
-Confirmed behaviors:
+False Leads Investigated and Ruled Out
+Network / Firewall
 
-* EHLO succeeded
-* STARTTLS advertised
-* TLS negotiation succeeded
-* MAIL FROM accepted
-* RCPT TO rejected
+Port 25 connectivity confirmed
 
----
+No IDS/IPS blocks observed
 
-### Server Rejection Evidence
+No UniFi Threat Management rules triggering
 
-During the RCPT stage, Microsoft 365 returned the following error:
+Firewall bypass rules tested with no change
 
-```
-550 5.7.1 Service unavailable, Client host [PUBLIC_IP] blocked using Spamhaus
-```
+MTU / Fragmentation
 
-This confirmed that:
+MTU path testing performed
 
-* The message was rejected by Microsoft 365
-* The rejection occurred after TLS negotiation
-* The failure was caused by IP reputation enforcement
-* The issue was not firewall-related
-* The issue was not authentication-related at this stage
+No consistent fragmentation failures identified
 
----
+TLS handshake succeeded, ruling out MTU as the primary cause
 
-## Key Findings
+TLS / Cipher Issues
 
-* MX endpoints do not support SMTP authentication
-* STARTTLS does not override reputation enforcement
-* Connection tests do not validate mail acceptance
-* Residential and cellular ISP IP ranges are commonly blocked on port 25
-* Mail can fail silently after successful connection and encryption
+STARTTLS advertised by the server
 
----
+TLS successfully negotiated
 
-## Corrective Action
+Cipher suite accepted
 
-The copier was reconfigured to use Microsoft’s supported SMTP submission endpoint.
+EHLO succeeded after TLS upgrade
 
-### Updated Configuration (Working)
+Connector Configuration
 
-| Setting             | Value                                     |
-| ------------------- | ----------------------------------------- |
-| SMTP Server         | `smtp.office365.com`                      |
-| Port                | 587                                       |
-| Encryption          | STARTTLS                                  |
-| SMTP Authentication | Enabled                                   |
-| Username            | `office@domain.com`                       |
-| Password            | Valid mailbox credentials or app password |
-| Sender Address      | `office@domain.com`                       |
+Outbound connector correctly configured
 
----
+Domain scope verified
 
-## Validation After Changes
+Connector validation test passed
 
-* SMTP connection test succeeded
-* SMTP authentication succeeded
-* Test scans delivered successfully
-* No further rejections observed
-* Configuration aligned with Microsoft support guidance
+Despite all of the above, delivery continued to fail.
 
----
+Definitive Diagnostic Test
 
-## Why This Matters
+A full SMTP conversation was performed manually using PowerShell, including:
 
-This case demonstrates why:
+EHLO
 
-* Port 25 is unreliable for outbound mail
-* STARTTLS alone is insufficient
-* IP reputation can block delivery even when encryption succeeds
-* Protocol-level testing is required to determine true root cause
+STARTTLS
 
----
+MAIL FROM
 
-## Lessons Learned
+RCPT TO
 
-* Always test MAIL FROM and RCPT TO, not just connectivity
-* Do not rely on copier connection tests as proof of delivery
-* Use Microsoft-supported SMTP submission for devices
-* Capture server rejection messages before changing infrastructure
-* Avoid temporary fixes that disable authentication
+Result at RCPT TO Stage
+550 5.7.1 Service unavailable, Client host [x.x.x.x] blocked using Spamhaus
 
----
 
-## Reuse Guidance
+This error does not appear during connector validation tests and only surfaces during an actual SMTP delivery attempt.
 
-This example can be reused when:
+Root Cause
 
-* Vendors blame firewalls or ISPs
-* Clients claim “it worked before”
-* SMTP tests pass but mail never arrives
-* Proof is needed for escalation or documentation
+Microsoft 365 rejected the sending host based on source IP reputation.
 
----
+Key observations:
 
-## Final Outcome
+Direct Send and SMTP Relay are subject to IP reputation enforcement
 
-The issue was resolved by switching from an unauthenticated MX-based SMTP configuration to authenticated SMTP submission on port 587. The final configuration is stable, supported, and repeatable.
+Reputation checks occur at the RCPT TO stage, not during connection or TLS negotiation
+
+Successful STARTTLS does not imply message acceptance
+
+Non-dedicated or residential IP ranges are high risk for port 25 relay
+
+Resolution
+
+The resolution was to abandon Direct Send and switch to SMTP Submission (Authenticated SMTP).
+
+Working Configuration
+
+Server: smtp.office365.com
+
+Port: 587
+
+Encryption: STARTTLS
+
+Authentication: Dedicated service mailbox
+
+SMTP AUTH: Enabled on mailbox
+
+MFA: Disabled or bypassed for SMTP
+
+After enabling SMTP AUTH and supplying credentials to the device, scan-to-email succeeded immediately.
+
+Why SMTP Submission Worked
+
+SMTP Submission does not rely on source IP reputation
+
+Authentication establishes trust independent of IP
+
+Port 587 is not commonly filtered by ISPs
+
+Microsoft recommends SMTP Submission for multifunction devices
+
+Lessons Learned
+
+Connector validation tests do not simulate real SMTP delivery
+
+STARTTLS success does not guarantee mail acceptance
+
+IP reputation failures may only appear at RCPT TO
+
+Port 25 relay is fragile outside of enterprise-grade static IP environments
+
+SMTP Submission is typically the most reliable option for MFP devices
+
+Recommendation
+
+For Sharp MX-series devices and similar multifunction printers:
+
+Use SMTP Submission (port 587) whenever possible
+
+Avoid Direct Send unless using a clean, static public IP
+
+Do not over-invest in port 25 troubleshooting if SMTP Submission works
+
+Always validate delivery with a full SMTP conversation test
+
+End of document.
